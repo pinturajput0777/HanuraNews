@@ -6,35 +6,33 @@ from telegram import Bot
 from telegram.request import HTTPXRequest
 from groq import Groq
 
-# --- CONFIGURATION (Environment Variables Se Key Uthayega) ---
+# --- CONFIGURATION ---
 TELEGRAM_TOKEN = "8771497619:AAHdTxUu1FeEsvD3S4W3PfKwI2rb0XzGmFs"
 CHANNEL_ID = "@piut89"
 
-# GitHub security se bachne ke liye keys ko environment variable bana diya hai
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GNEWS_API_KEY = os.environ.get("GNEWS_API_KEY")
 MARKETAUX_API_KEY = os.environ.get("MARKETAUX_API_KEY")
 LEONARDO_API_KEY = os.environ.get("LEONARDO_API_KEY")
 
-# Initialize Groq Client safely
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
 else:
     groq_client = None
 
-posted_titles = set()
+# Last posted title ko save rakhne ke liye variable
+LAST_POSTED_TITLE = None
 
-# Timeout issue fix karne ke liye explicitly set kiya hai
 tg_request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
 bot = Bot(token=TELEGRAM_TOKEN, request=tg_request)
 
 def fetch_latest_news():
-    """Marketaux aur GNews se latest financial news lane ke liye"""
+    """Marketaux aur GNews se latest news lane ke liye"""
     if MARKETAUX_API_KEY:
         url_marketaux = f"https://api.marketaux.com/v1/news/all?symbols=TSLA,AMZN,MSFT&filter_entities=true&limit=1&api_token={MARKETAUX_API_KEY}"
         try:
             res = requests.get(url_marketaux, timeout=10).json()
-            if res.get("data"):
+            if res.get("data") and len(res["data"]) > 0:
                 news = res["data"][0]
                 return news.get("title"), news.get("description")
         except Exception as e:
@@ -44,7 +42,7 @@ def fetch_latest_news():
         url_gnews = f"https://gnews.io/api/v4/search?q=finance OR crypto OR trading&lang=en&max=1&apikey={GNEWS_API_KEY}"
         try:
             res = requests.get(url_gnews, timeout=10).json()
-            if res.get("articles"):
+            if res.get("articles") and len(res["articles"]) > 0:
                 news = res["articles"][0]
                 return news.get("title"), news.get("description")
         except Exception as e:
@@ -53,7 +51,6 @@ def fetch_latest_news():
     return None, None
 
 def generate_groq_article(title, description):
-    """Groq AI se strict HTML formatting waala post generate karne ke liye"""
     if not groq_client:
         return f"<b>🚨 Breaking News:</b> {title}\n\n{description}"
 
@@ -82,12 +79,10 @@ def generate_groq_article(title, description):
         return f"<b>🚨 Breaking News:</b> {title}\n\n{description}"
 
 def generate_leonardo_image(title):
-    """Image URL generation with fast pollination fallback"""
     clean_title = "".join(c for c in title if c.isalnum() or c.isspace()).replace(" ", "%20")
     return f"https://image.pollinations.ai/p/{clean_title}?width=600&height=600&nofeed=true"
 
 async def post_to_telegram(text, image_url):
-    """HTML parse mode ke sath channel par post bhejna"""
     try:
         async with bot:
             await bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=text, parse_mode="HTML")
@@ -96,13 +91,15 @@ async def post_to_telegram(text, image_url):
         print(f"Telegram Posting Error: {e}")
 
 async def main():
+    global LAST_POSTED_TITLE
     print("🚀 Financial Market Automation Bot Shuru Ho Chuka Hai...")
     
     while True:
         title, desc = fetch_latest_news()
         
-        if title and title not in posted_titles:
-            print(f"📰 Fresh news mili: {title}")
+        # STRICT FILTER: Agar title bilkul naya hai aur purane wale se alag hai tabhi chalega
+        if title and title != LAST_POSTED_TITLE:
+            print(f"📰 Bilkul Fresh news mili: {title}")
             
             article_text = generate_groq_article(title, desc)
             img_url = generate_leonardo_image(title)
@@ -110,15 +107,15 @@ async def main():
             print("Telegram par upload ho raha hai...")
             await post_to_telegram(article_text, img_url)
             
-            posted_titles.add(title)
-            if len(posted_titles) > 100:
-                posted_titles.pop()
+            # Last posted title ko update kar do taaki dobara na bheje
+            LAST_POSTED_TITLE = title
         else:
-            print("Check kiya: Koi nayi news nahi mili ya duplicate hai.")
+            print("Check kiya: Koi nayi news nahi aayi hai. Purani news ko ignore kar diya.")
 
-        print("Agli news ke liye check 10 mins baad hoga...")
-        await asyncio.sleep(600)
+        # Har 15 minute mein check karega taaki APIs ki daily limit bhi khatam na ho
+        print("Agli news ke liye check 15 mins baad hoga...")
+        await asyncio.sleep(900)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
+            
